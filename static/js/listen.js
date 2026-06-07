@@ -1,42 +1,46 @@
-// 전역 변수로 관리
+const audioPlayer = document.getElementById('audioPlayer');
+const playBtn = document.getElementById('playBtn');
+
 let mediaSource;
 let sourceBuffer;
-let queue = [];
-const audioPlayer = document.getElementById('audioPlayer');
+let isReconnecting = false;
 
-// HTML 버튼이 이 함수를 부릅니다
+// 오디오 초기화 및 에러 핸들링 함수
 function initAudio() {
     console.log("초기화 시작");
     
-    // 재생 버튼 숨김 처리
-    const playBtn = document.getElementById('playBtn');
-    if(playBtn) playBtn.style.display = 'none';
+    if (playBtn) playBtn.style.display = 'none';
 
     mediaSource = new MediaSource();
     audioPlayer.src = URL.createObjectURL(mediaSource);
 
     mediaSource.addEventListener('sourceopen', () => {
         const mimeType = 'audio/webm;codecs=opus';
-        sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-        
-        sourceBuffer.addEventListener('updateend', () => {
-            if (queue.length > 0 && !sourceBuffer.updating) {
-                sourceBuffer.appendBuffer(queue.shift());
-            }
-        });
-        
-        // sourceopen 이후 연결 시작
-        connectWebSocket();
+        if (MediaSource.isTypeSupported(mimeType)) {
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+            connectWebSocket();
+        } else {
+            console.error("Codec not supported by browser");
+        }
+    });
+
+    // 에러 발생 시 자동 복구
+    audioPlayer.addEventListener('error', () => {
+        console.error("오디오 에러 발생! 2초 후 재시작합니다.");
+        if (!isReconnecting) {
+            isReconnecting = true;
+            setTimeout(() => {
+                isReconnecting = false;
+                initAudio(); // 다시 처음부터 시작
+            }, 2000);
+        }
     });
 }
 
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-    // HTML 템플릿에 정의되어 있는 전역 변수 ROOM_ID를 사용합니다.
-    // (h1 태그 파싱 시 "Listening:" 텍스트로 인해 발생할 수 있는 에러 방지)
+    // 템플릿의 글로벌 변수 ROOM_ID 사용 (하드코딩 방지)
     const room_id = ROOM_ID; 
-    
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/listen/${encodeURIComponent(room_id)}`);
     socket.binaryType = 'arraybuffer';
 
@@ -60,21 +64,27 @@ function connectWebSocket() {
             return;
         }
 
-        console.log("데이터 수신:", event.data.byteLength, "bytes");
+        // 플레이어 에러 상태 확인
+        if (audioPlayer.error) {
+            console.log("플레이어 에러 상태, 복구 대기 중...");
+            return;
+        }
 
         if (sourceBuffer && !sourceBuffer.updating) {
             try {
                 sourceBuffer.appendBuffer(event.data);
             } catch (e) {
-                console.error("버퍼 에러 발생, 큐에 추가:", e);
-                queue.push(event.data);
+                console.error("버퍼 에러:", e);
             }
-        } else {
-            queue.push(event.data);
         }
-
+        
         if (audioPlayer.paused) {
             audioPlayer.play().catch(e => console.log("재생 대기중"));
         }
     };
+}
+
+// 버튼 클릭 시 시작
+if (playBtn) {
+    playBtn.addEventListener('click', initAudio);
 }
