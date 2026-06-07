@@ -62,13 +62,17 @@ async def websocket_broadcast(websocket: WebSocket, room_id: str):
             
             # Route signaling message to the specific listener
             target_listener_id = message.get("target")
+            msg_type = message.get("type")
             if target_listener_id and target_listener_id in rooms[room_id]["listeners"]:
+                logger.info(f"[Room: {room_id}] Relaying '{msg_type}' from Broadcaster -> Listener ({target_listener_id})")
                 listener_ws = rooms[room_id]["listeners"][target_listener_id]
                 await listener_ws.send_text(json.dumps({
-                    "type": message.get("type"),
+                    "type": msg_type,
                     "sdp": message.get("sdp"),
                     "candidate": message.get("candidate")
                 }))
+            else:
+                logger.warning(f"[Room: {room_id}] Failed to relay '{msg_type}': target Listener ({target_listener_id}) not found.")
                 
     except WebSocketDisconnect:
         logger.info(f"Broadcaster disconnected from room: {room_id}")
@@ -111,13 +115,17 @@ async def websocket_listen(websocket: WebSocket, room_id: str):
             message = json.loads(data)
             
             # Route signaling message (answer/candidate) back to the broadcaster
+            msg_type = message.get("type")
             if rooms[room_id].get("broadcaster"):
+                logger.info(f"[Room: {room_id}] Relaying '{msg_type}' from Listener ({listener_id}) -> Broadcaster")
                 await rooms[room_id]["broadcaster"].send_text(json.dumps({
-                    "type": message.get("type"),
+                    "type": msg_type,
                     "sdp": message.get("sdp"),
                     "candidate": message.get("candidate"),
                     "source": listener_id
                 }))
+            else:
+                logger.warning(f"[Room: {room_id}] Failed to relay '{msg_type}': Broadcaster not found.")
                 
     except WebSocketDisconnect:
         logger.info(f"Listener {listener_id} disconnected from room: {room_id}")
