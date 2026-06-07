@@ -1,12 +1,19 @@
-let mediaRecorder;
 let socket;
+let stream;
 let audioContext;
 let analyser;
-let stream;
 
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const visualizer = document.getElementById('visualizer');
+
+// Map of listener_id -> RTCPeerConnection
+const peerConnections = {};
+
+// STUN server configuration for ICE
+const rtcConfig = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+};
 
 // Initialize visualizer bars
 for (let i = 0; i < 20; i++) {
@@ -18,7 +25,6 @@ const bars = document.querySelectorAll('.bar');
 
 async function start() {
     try {
-        // Request microphone access
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         
         // Setup AudioContext for visualizer
@@ -27,28 +33,38 @@ async function start() {
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 64;
         source.connect(analyser);
-        
         updateVisualizer();
 
-        // Setup WebSocket
+        // Setup WebSocket Signaling
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${protocol}//${window.location.host}/ws/broadcast/${encodeURIComponent(ROOM_ID)}`);
 
         socket.onopen = () => {
             statusDot.className = 'status-dot active';
             statusText.textContent = 'ON AIR';
+        };
+
+        socket.onmessage = async (event) => {
+            const message = JSON.parse(event.data);
             
-            // Start recording and sending chunks every 1 second
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-            
-            mediaRecorder.ondataavailable = async (e) => {
-                if (e.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-                    const buffer = await e.data.arrayBuffer();
-                    socket.send(buffer);
+            if (message.type === 'listener_joined') {
+                await createPeerConnection(message.listener_id);
+            } else if (message.type === 'listener_left') {
+                if (peerConnections[message.source]) {
+                    peerConnections[message.source].close();
+                    delete peerConnections[message.source];
                 }
-            };
-            
-            mediaRecorder.start(1000); // 1000ms chunk size
+            } else if (message.type === 'answer') {
+                const pc = peerConnections[message.source];
+                if (pc) {
+                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: message.sdp }));
+                }
+            } else if (message.type === 'candidate') {
+                const pc = peerConnections[message.source];
+                if (pc && message.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+                }
+            }
         };
 
         socket.onclose = () => {
@@ -70,32 +86,55 @@ async function start() {
     }
 }
 
+async function createPeerConnection(listenerId) {
+    const pc = new RTCPeerConnection(rtcConfig);
+    peerConnections[listenerId] = pc;
+
+    // Add local stream tracks to connection
+    stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream);
+    });
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.send(JSON.stringify({
+                target: listenerId,
+                type: 'candidate',
+                candidate: event.candidate
+            }));
+        }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    socket.send(JSON.stringify({
+        target: listenerId,
+        type: 'offer',
+        sdp: offer.sdp
+    }));
+}
+
 function updateVisualizer() {
     if (!analyser) return;
-    
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
     
     for (let i = 0; i < bars.length; i++) {
-        // Map frequency data to bar height (10px to 100px)
         const value = dataArray[i];
         const height = Math.max(10, (value / 255) * 100);
         bars[i].style.height = `${height}px`;
-        
         if (value > 200) {
-            bars[i].style.background = 'var(--danger-color)'; // Red if loud
+            bars[i].style.background = 'var(--danger-color)';
         } else {
             bars[i].style.background = 'var(--accent-color)';
         }
     }
-    
     requestAnimationFrame(updateVisualizer);
 }
 
 function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-    }
+    Object.values(peerConnections).forEach(pc => pc.close());
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
     }
@@ -106,11 +145,8 @@ function stopRecording() {
 
 function stopBroadcast() {
     stopRecording();
-    if (socket) {
-        socket.close();
-    }
+    if (socket) socket.close();
     window.location.href = '/';
 }
 
-// Start automatically
 window.onload = start;

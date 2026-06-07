@@ -1,90 +1,96 @@
 const audioPlayer = document.getElementById('audioPlayer');
 const playBtn = document.getElementById('playBtn');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
 
-let mediaSource;
-let sourceBuffer;
-let isReconnecting = false;
+let socket;
+let peerConnection;
 
-// 오디오 초기화 및 에러 핸들링 함수
-function initAudio() {
-    console.log("초기화 시작");
-    
-    if (playBtn) playBtn.style.display = 'none';
-
-    mediaSource = new MediaSource();
-    audioPlayer.src = URL.createObjectURL(mediaSource);
-
-    mediaSource.addEventListener('sourceopen', () => {
-        const mimeType = 'audio/webm;codecs=opus';
-        if (MediaSource.isTypeSupported(mimeType)) {
-            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-            connectWebSocket();
-        } else {
-            console.error("Codec not supported by browser");
-        }
-    });
-
-    // 에러 발생 시 자동 복구
-    audioPlayer.addEventListener('error', () => {
-        console.error("오디오 에러 발생! 2초 후 재시작합니다.");
-        if (!isReconnecting) {
-            isReconnecting = true;
-            setTimeout(() => {
-                isReconnecting = false;
-                initAudio(); // 다시 처음부터 시작
-            }, 2000);
-        }
-    });
-}
+const rtcConfig = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+};
 
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // 템플릿의 글로벌 변수 ROOM_ID 사용 (하드코딩 방지)
-    const room_id = ROOM_ID; 
-    const socket = new WebSocket(`${protocol}//${window.location.host}/ws/listen/${encodeURIComponent(room_id)}`);
-    socket.binaryType = 'arraybuffer';
+    socket = new WebSocket(`${protocol}//${window.location.host}/ws/listen/${encodeURIComponent(ROOM_ID)}`);
 
     socket.onopen = () => {
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
         if(statusDot) statusDot.className = 'status-dot active';
-        if(statusText) statusText.textContent = 'LIVE';
+        if(statusText) statusText.textContent = 'Connecting via P2P...';
     };
 
-    socket.onmessage = (event) => {
-        // 문자열 메시지(방송 종료 등) 처리
-        if (typeof event.data === 'string') {
-            if (event.data === 'BROADCAST_ENDED') {
-                const statusDot = document.getElementById('statusDot');
-                const statusText = document.getElementById('statusText');
-                if(statusDot) statusDot.className = 'status-dot';
-                if(statusText) statusText.textContent = 'Broadcast Ended';
-                socket.close();
-            }
+    socket.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+
+        if (message.type === 'broadcast_ended') {
+            if(statusDot) statusDot.className = 'status-dot';
+            if(statusText) statusText.textContent = 'Broadcast Ended';
+            if (peerConnection) peerConnection.close();
+            socket.close();
+            return;
+        } else if (message.type === 'error') {
+            if(statusDot) statusDot.className = 'status-dot error';
+            if(statusText) statusText.textContent = message.message;
             return;
         }
 
-        // 플레이어 에러 상태 확인
-        if (audioPlayer.error) {
-            console.log("플레이어 에러 상태, 복구 대기 중...");
-            return;
-        }
+        if (message.type === 'offer') {
+            peerConnection = new RTCPeerConnection(rtcConfig);
 
-        if (sourceBuffer && !sourceBuffer.updating) {
-            try {
-                sourceBuffer.appendBuffer(event.data);
-            } catch (e) {
-                console.error("버퍼 에러:", e);
-            }
+            // WebRTC 트랙(오디오 스트림)이 수신되면 audioPlayer에 직접 연결합니다.
+            peerConnection.ontrack = (e) => {
+                console.log("WebRTC 트랙 수신됨", e.streams[0]);
+                if(statusText) statusText.textContent = 'LIVE (WebRTC)';
+                
+                audioPlayer.srcObject = e.streams[0];
+                audioPlayer.play().catch(err => console.log("Auto-play prevented", err));
+            };
+
+            peerConnection.onicecandidate = (e) => {
+                if (e.candidate) {
+                    socket.send(JSON.stringify({
+                        type: 'candidate',
+                        candidate: e.candidate
+                    }));
+                }
+            };
+
+            await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: message.sdp }));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            socket.send(JSON.stringify({
+                type: 'answer',
+                sdp: answer.sdp
+            }));
+            
+        } else if (message.type === 'candidate' && peerConnection) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
         }
-        
-        if (audioPlayer.paused) {
-            audioPlayer.play().catch(e => console.log("재생 대기중"));
+    };
+    
+    socket.onclose = () => {
+        if(statusText && statusText.textContent.includes('LIVE')) {
+            if(statusDot) statusDot.className = 'status-dot';
+            if(statusText) statusText.textContent = 'Disconnected';
         }
+        if (peerConnection) peerConnection.close();
+    };
+
+    socket.onerror = (err) => {
+        if(statusDot) statusDot.className = 'status-dot error';
+        if(statusText) statusText.textContent = 'Connection Error';
+        console.error('WebSocket Error:', err);
     };
 }
 
-// 버튼 클릭 시 시작
 if (playBtn) {
-    playBtn.addEventListener('click', initAudio);
+    playBtn.addEventListener('click', () => {
+        playBtn.style.display = 'none';
+        
+        // 모바일 브라우저의 오디오 정책을 풀기 위해 빈 재생 시도
+        audioPlayer.play().catch(() => {});
+        
+        connectWebSocket();
+    });
 }
