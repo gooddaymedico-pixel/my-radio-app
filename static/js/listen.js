@@ -19,10 +19,16 @@ function initAudio() {
     mediaSource = new MediaSource();
     audioPlayer.src = URL.createObjectURL(mediaSource);
 
+    // 에러 핸들러 추가: 미디어 요소에서 에러가 발생하면 처리
+    audioPlayer.addEventListener('error', (e) => {
+        console.error('Audio Player Error:', e);
+        statusText.textContent = "Audio Error. Reconnecting...";
+        // 잠시 후 재시도
+        setTimeout(initAudio, 2000); 
+    });
+
     mediaSource.addEventListener('sourceopen', () => {
-        // MediaRecorder defaults to webm opus in Chrome/Firefox
         const mimeType = 'audio/webm;codecs=opus';
-        
         if (MediaSource.isTypeSupported(mimeType)) {
             sourceBuffer = mediaSource.addSourceBuffer(mimeType);
             
@@ -31,11 +37,17 @@ function initAudio() {
                     sourceBuffer.appendBuffer(queue.shift());
                 }
             });
+
+            // SourceBuffer 에러 발생 시 처리
+            sourceBuffer.addEventListener('error', (e) => {
+                console.error('SourceBuffer Error:', e);
+                // 에러 발생 시 버퍼 초기화 시도
+                if (!sourceBuffer.updating) {
+                    sourceBuffer.abort();
+                }
+            });
             
             connectWebSocket();
-        } else {
-            statusText.textContent = "Codec not supported by browser";
-            statusDot.className = 'status-dot error';
         }
     });
 
@@ -55,7 +67,7 @@ function connectWebSocket() {
     socket.onopen = () => {
         statusDot.className = 'status-dot active';
         statusText.textContent = 'LIVE';
-        playBtn.style.display = 'none'; // Hide play button once connected
+        playBtn.style.display = 'none';
     };
 
     socket.onmessage = (event) => {
@@ -64,37 +76,24 @@ function connectWebSocket() {
                 statusDot.className = 'status-dot';
                 statusText.textContent = 'Broadcast Ended';
                 socket.close();
-            } else if (event.data === 'ROOM_NOT_FOUND') {
-                statusDot.className = 'status-dot error';
-                statusText.textContent = 'Room Not Found';
             }
             return;
         }
 
-        // Binary audio chunk received
         const data = event.data;
-        if (sourceBuffer && !sourceBuffer.updating) {
-            sourceBuffer.appendBuffer(data);
+        // 데이터가 들어올 때 에러 상태가 아니라면 추가
+        if (sourceBuffer && !sourceBuffer.updating && audioPlayer.error === null) {
+            try {
+                sourceBuffer.appendBuffer(data);
+            } catch (e) {
+                console.error('AppendBuffer Error:', e);
+            }
         } else {
             queue.push(data);
         }
         
-        // Ensure playback continues
         if (audioPlayer.paused) {
             audioPlayer.play().catch(e => console.log(e));
         }
-    };
-
-    socket.onclose = () => {
-        if(statusText.textContent === 'LIVE') {
-            statusDot.className = 'status-dot';
-            statusText.textContent = 'Disconnected';
-        }
-    };
-
-    socket.onerror = (err) => {
-        statusDot.className = 'status-dot error';
-        statusText.textContent = 'Connection Error';
-        console.error('WebSocket Error:', err);
     };
 }
