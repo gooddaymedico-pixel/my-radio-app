@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Listening - {{ room_id }}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Listening: {{ room_id }}</h1>
+    </header>
+
+    <main>
+        <section class="glass-panel" style="text-align: center;">
+            <div class="status-badge" id="statusBadge">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            
+            <div class="visualizer-container" id="visualizer">
+                 <div class="bar" style="animation: pulse 1s infinite alternate; height: 30px;"></div>
+                 <div class="bar" style="animation: pulse 1.2s infinite alternate; height: 50px;"></div>
+                 <div class="bar" style="animation: pulse 0.8s infinite alternate; height: 20px;"></div>
+                 <div class="bar" style="animation: pulse 1.5s infinite alternate; height: 60px;"></div>
+                 <div class="bar" style="animation: pulse 1s infinite alternate; height: 40px;"></div>
+            </div>
+            
+            <!-- Hidden audio player for MSE -->
+            <audio id="audioPlayer"></audio>
+
+            <div style="color: var(--text-secondary); margin-bottom: 2rem; font-size: 0.9rem;">
+                Click the button below to start listening.
+            </div>
+
+            <button class="btn btn-primary" id="playBtn" onclick="initAudio()">PLAY AUDIO</button>
+            <a href="/" class="btn btn-danger" style="margin-top: 1rem;">LEAVE CHANNEL</a>
+        </section>
+    </main>
+
+    <script>
+        const ROOM_ID = "{{ room_id }}";
+    </script>
+    <script src="/static/js/listen.js"></script>
+</body>
+</html>

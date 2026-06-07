@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S22 Radio Platform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>S22 Radio</h1>
+    </header>
+
+    <main>
+        <section class="glass-panel">
+            <h2>🎙️ Broadcast Now</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Start your own live radio channel instantly.</p>
+            <input type="text" id="roomName" placeholder="Enter channel name..." autocomplete="off">
+            <button class="btn btn-primary" onclick="startBroadcast()">START BROADCAST</button>
+        </section>
+
+        <section class="glass-panel">
+            <h2>🎧 Live Channels</h2>
+            <ul class="channel-list">
+                {% if active_rooms %}
+                    {% for room in active_rooms %}
+                        <li class="channel-item">
+                            <span class="channel-name">{{ room }}</span>
+                            <a href="/listen/{{ room }}" class="join-btn">Listen</a>
+                        </li>
+                    {% endfor %}
+                {% else %}
+                    <li class="empty-state">No live channels at the moment. Be the first to broadcast!</li>
+                {% endif %}
+            </ul>
+        </section>
+    </main>
+
+    <script>
+        function startBroadcast() {
+            const roomName = document.getElementById('roomName').value.trim();
+            if(roomName) {
+                // Redirect to broadcast room
+                window.location.href = `/broadcast/${encodeURIComponent(roomName)}`;
+            } else {
+                alert("Please enter a channel name.");
+            }
+        }
+    </script>
+</body>
+</html>
